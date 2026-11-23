@@ -69,7 +69,7 @@ export function JourneyScreen({ onOpenTopic, onExit }: JourneyScreenProps) {
             {soundOn ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
           <button className="pa-reset-btn" onClick={reset} aria-label="Reset progress">
-            <RotateCcw size={13} /> Reset progress
+            <RotateCcw size={13} /><span>Reset progress</span>
           </button>
         </div>
       </div>

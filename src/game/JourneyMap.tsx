@@ -22,6 +22,20 @@ interface NodePos {
   length: number;
 }
 
+interface PathPoint {
+  x: number;
+  y: number;
+}
+
+const mapPoints: PathPoint[] = [
+  { x: 20, y: 90 },
+  { x: 45, y: 82 },
+  { x: 72, y: 70 },
+  { x: 50, y: 56 },
+  { x: 26, y: 44 },
+  { x: 52, y: 22 },
+];
+
 export function JourneyMap({
   lesson,
   completedTopics,
@@ -37,6 +51,7 @@ export function JourneyMap({
   const [shakeId, setShakeId] = useState<string | null>(null);
   const [nodePositions, setNodePositions] = useState<NodePos[]>([]);
   const [nodeLengths, setNodeLengths] = useState<number[]>([]);
+  const [pathTotal, setPathTotal] = useState(0);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -51,45 +66,29 @@ export function JourneyMap({
     return () => ro.disconnect();
   }, []);
 
-  // Build path string for current size + compute node positions via getPointAtLength
-  const pathD = useMemo(() => buildPath(size.w, size.h), [size]);
+  const visualPath = useMemo(() => buildCurve(mapPoints), []);
+  const samplingPath = useMemo(
+    () => buildCurve(mapPoints.map((point) => ({ x: point.x * size.w / 100, y: point.y * size.h / 100 }))),
+    [size]
+  );
 
   useEffect(() => {
     const p = pathRef.current;
-    if (!p || size.w === 0 || !pathD) return;
-    p.setAttribute("d", pathD);
-    let total: number;
+    if (!p || size.w === 0 || !samplingPath) return;
+    p.setAttribute("d", samplingPath);
     try {
-      total = p.getTotalLength();
+      const total = p.getTotalLength();
+      const lengths = mapPoints.map((_, index) => p.getTotalLength() * index / (mapPoints.length - 1));
+      const positions = mapPoints.map((point, index) => ({ ...point, length: lengths[index] }));
+      setPathTotal(total);
+      setNodePositions(positions);
+      setNodeLengths(lengths);
     } catch {
-      return;
+      setNodePositions([]);
+      setNodeLengths([]);
+      setPathTotal(0);
     }
-    if (!total || !isFinite(total)) return;
-    const topicCount = lesson.topics.length;
-    const segments = topicCount + 1; // last segment ends at boss
-    const positions: NodePos[] = [];
-    const lengths: number[] = [];
-    for (let i = 0; i < topicCount; i++) {
-      const len = (total * i) / segments;
-      try {
-        const pt = p.getPointAtLength(len);
-        positions.push({ x: pt.x, y: pt.y, length: len });
-        lengths.push(len);
-      } catch {
-        // ignore
-      }
-    }
-    const bossLen = total;
-    try {
-      const bossPt = p.getPointAtLength(bossLen);
-      positions.push({ x: bossPt.x, y: bossPt.y, length: bossLen });
-      lengths.push(bossLen);
-    } catch {
-      // ignore
-    }
-    setNodePositions(positions);
-    setNodeLengths(lengths);
-  }, [pathD, size, lesson.topics.length]);
+  }, [samplingPath, size]);
 
   const stateFor = (topic: Topic, index: number): NodeState => {
     if (completedTopics.includes(topic.id)) return "completed";
@@ -107,16 +106,22 @@ export function JourneyMap({
   };
 
   const atBoss = bossUnlocked && completedTopics.length === lesson.topics.length;
+  const completedRatio = pathTotal > 0
+    ? (nodeLengths[Math.min(completedTopics.length, lesson.topics.length)] ?? 0) / pathTotal
+    : 0;
 
   return (
-    <div className="pa-map" ref={containerRef}>
-      <svg className="pa-trail-svg" viewBox={`0 0 ${size.w} ${size.h}`} preserveAspectRatio="none">
-        <path ref={pathRef} className="pa-trail-shadow" d={pathD} fill="none" />
-        <path className="pa-trail-main" d={pathD} fill="none" />
-        <path className="pa-trail-dash" d={pathD} fill="none" />
+    <div className={`pa-map${atBoss ? " pa-map-boss-ready" : ""}`} ref={containerRef}>
+      <svg className="pa-trail-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <path className="pa-trail-shadow" d={visualPath} pathLength="1" fill="none" />
+        <path className="pa-trail-main" d={visualPath} pathLength="1" fill="none" />
+        <path className="pa-trail-complete" d={visualPath} pathLength="1" strokeDasharray={`${completedRatio} 1`} fill="none" />
+      </svg>
+      <svg className="pa-trail-sampler" viewBox={`0 0 ${size.w} ${size.h}`} preserveAspectRatio="none" aria-hidden="true">
+        <path ref={pathRef} d={samplingPath} fill="none" />
       </svg>
 
-      {nodePositions.slice(0, lesson.topics.length).map((np, i) => {
+      {nodePositions.slice(1, lesson.topics.length + 1).map((np, i) => {
         const topic = lesson.topics[i];
         const state = stateFor(topic, i);
         return (
@@ -133,12 +138,14 @@ export function JourneyMap({
         );
       })}
 
-      {nodePositions.length > lesson.topics.length && (
+      {nodePositions.length === mapPoints.length && (
         <BossNode
-          x={nodePositions[nodePositions.length - 1].x}
-          y={nodePositions[nodePositions.length - 1].y}
+          x={nodePositions[mapPoints.length - 1].x}
+          y={nodePositions[mapPoints.length - 1].y}
           unlocked={bossUnlocked}
           bossName={lesson.bossName}
+          completedTopics={completedTopics}
+          lesson={lesson}
           shaking={shakeId === "__boss__"}
           onClick={() => {
             if (!bossUnlocked) {
@@ -154,7 +161,7 @@ export function JourneyMap({
       <PipWalker
         pathRef={pathRef}
         nodeLengths={nodeLengths}
-        currentIndex={currentIndex}
+        currentIndex={currentIndex + 1}
         atBoss={atBoss}
         reducedMotion={reducedMotion}
       />
@@ -179,32 +186,18 @@ function MapNode({ topic, index, state, x, y, shaking, onClick }: MapNodeProps) 
     <button
       type="button"
       className={`pa-node pa-node-${state}${shaking ? " pa-shake" : ""}`}
-      style={{ left: `${x}px`, top: `${y}px` }}
+      style={{ left: `${x}%`, top: `${y}%` }}
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
       tabIndex={disabled ? -1 : 0}
     >
       <span className="pa-node-inner">
-        {state === "completed" ? (
-          <Badge id={topic.badgeImage} size={54} className="pa-node-badge" />
-        ) : state === "current" ? (
-          <span className="pa-node-num">{index + 1}</span>
-        ) : (
-          <span className="pa-node-num">{index + 1}</span>
-        )}
-        {state === "completed" && (
-          <span className="pa-node-check">
-            <Check size={14} strokeWidth={3.5} />
-          </span>
-        )}
-        {state === "locked" && (
-          <span className="pa-node-lock">
-            <Lock size={18} strokeWidth={2.5} />
-          </span>
-        )}
+        <Badge id={topic.badgeImage} size={76} className="pa-node-badge" />
+        <span className="pa-node-num">{index + 1}</span>
+        {state === "completed" && <span className="pa-node-check"><Check size={14} strokeWidth={3.5} /></span>}
+        {state === "locked" && <span className="pa-node-lock"><Lock size={16} strokeWidth={2.5} /></span>}
       </span>
-      <span className="pa-node-label">{index + 1}</span>
     </button>
   );
 }
@@ -214,68 +207,46 @@ interface BossNodeProps {
   y: number;
   unlocked: boolean;
   bossName: string;
+  completedTopics: string[];
+  lesson: Lesson;
   shaking: boolean;
   onClick: () => void;
 }
 
-function BossNode({ x, y, unlocked, bossName, shaking, onClick }: BossNodeProps) {
+function BossNode({ x, y, unlocked, bossName, completedTopics, lesson, shaking, onClick }: BossNodeProps) {
   return (
     <button
       type="button"
       className={`pa-boss-node${unlocked ? " pa-boss-unlocked" : ""}${shaking ? " pa-shake" : ""}`}
-      style={{ left: `${x}px`, top: `${y}px` }}
+      style={{ left: `${x}%`, top: `${y}%` }}
       onClick={onClick}
       disabled={!unlocked}
       aria-label={`Boss: ${bossName}, ${unlocked ? "ready" : "locked"}`}
       tabIndex={unlocked ? 0 : -1}
     >
-      <span className="pa-boss-temple">
-        {unlocked ? (
-          <span className="pa-boss-eye" />
-        ) : (
-          <span className="pa-boss-lock">
-            <Lock size={26} strokeWidth={2.5} />
-          </span>
-        )}
+      <span className="pa-boss-medallion">
+        <img src="/assets/medallion-gloom-slug.png.png" alt="" draggable={false} />
+        {!unlocked && <span className="pa-boss-lock"><Lock size={24} strokeWidth={2.5} /></span>}
       </span>
+      {unlocked && <span className="pa-boss-fight">Fight!</span>}
       <span className="pa-boss-label">{bossName}</span>
+      <span className="pa-boss-slots" aria-label={`${completedTopics.length} of ${lesson.topics.length} power stones collected`}>
+        {lesson.topics.map((topic) => (
+          <Badge key={topic.id} id={topic.badgeImage} size={18} className={completedTopics.includes(topic.id) ? "pa-slot-filled" : "pa-slot-empty"} />
+        ))}
+      </span>
     </button>
   );
 }
 
-function buildPath(w: number, h: number): string {
-  if (w === 0 || h === 0) return "";
-  const isMobile = w < 600;
-  const padX = isMobile ? w * 0.14 : w * 0.1;
-  const padBottom = h * 0.08;
-  const padTop = h * 0.1;
-  const usableW = w - padX * 2;
-  const usableH = h - padBottom - padTop;
-
-  const startX = padX;
-  const startY = h - padBottom;
-  const endX = w - padX;
-  const endY = padTop;
-
-  const segments = 4; // S-zigzag count
-  const points: { x: number; y: number }[] = [];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const y = startY - usableH * t;
-    const xBase = startX + usableW * t;
-    const side = i % 2 === 0 ? -1 : 1;
-    const wobble = isMobile ? usableW * 0.22 : usableW * 0.16;
-    const x = i === 0 ? startX : i === segments ? endX : xBase + side * wobble * 0.5;
-    points.push({ x, y });
-  }
-
-  // Build smooth cubic path
+function buildCurve(points: PathPoint[]): string {
+  if (!points.length) return "";
   let d = `M ${points[0].x} ${points[0].y}`;
   for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const cpY = (prev.y + curr.y) / 2;
-    d += ` C ${prev.x} ${cpY}, ${curr.x} ${cpY}, ${curr.x} ${curr.y}`;
+    const previous = points[i - 1];
+    const current = points[i];
+    const controlY = (previous.y + current.y) / 2;
+    d += ` C ${previous.x} ${controlY}, ${current.x} ${controlY}, ${current.x} ${current.y}`;
   }
   return d;
 }

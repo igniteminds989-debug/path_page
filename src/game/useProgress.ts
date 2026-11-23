@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "pyarena:progress:v1";
 
@@ -9,7 +9,12 @@ export interface ProgressState {
 
 const empty: ProgressState = { completedTopics: [], earnedBadges: [] };
 
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof localStorage !== "undefined";
+}
+
 function read(): ProgressState {
+  if (!isBrowser()) return empty;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return empty;
@@ -27,6 +32,7 @@ function read(): ProgressState {
 }
 
 function write(state: ProgressState): void {
+  if (!isBrowser()) return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -34,12 +40,29 @@ function write(state: ProgressState): void {
   }
 }
 
-export function useProgress() {
-  const [state, setState] = useState<ProgressState>(() => read());
+// Module-level shared store
+let currentState: ProgressState = isBrowser() ? read() : empty;
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    write(state);
-  }, [state]);
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getSnapshot(): ProgressState {
+  return currentState;
+}
+
+function getServerSnapshot(): ProgressState {
+  return empty;
+}
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+export function useProgress() {
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const isTopicComplete = useCallback(
     (topicId: string) => state.completedTopics.includes(topicId),
@@ -47,24 +70,27 @@ export function useProgress() {
   );
 
   const completeTopic = useCallback((topicId: string, badgeId: string) => {
-    setState((prev) => {
-      if (prev.completedTopics.includes(topicId)) return prev;
-      return {
-        completedTopics: [...prev.completedTopics, topicId],
-        earnedBadges: prev.earnedBadges.includes(badgeId)
-          ? prev.earnedBadges
-          : [...prev.earnedBadges, badgeId],
-      };
-    });
+    if (currentState.completedTopics.includes(topicId)) return;
+    const next: ProgressState = {
+      completedTopics: [...currentState.completedTopics, topicId],
+      earnedBadges: currentState.earnedBadges.includes(badgeId)
+        ? currentState.earnedBadges
+        : [...currentState.earnedBadges, badgeId],
+    };
+    write(next);
+    currentState = next;
+    notify();
   }, []);
 
   const reset = useCallback(() => {
-    setState(empty);
+    write(empty);
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      if (isBrowser()) localStorage.removeItem(STORAGE_KEY);
     } catch {
       // ignore
     }
+    currentState = empty;
+    notify();
   }, []);
 
   return { state, isTopicComplete, completeTopic, reset };

@@ -10,7 +10,7 @@ export function GameApp() {
   const lesson = LESSONS[0];
 
   const topic = activeTopicId
-    ? lesson.topics.find((t) => t.id === activeTopicId) ?? null
+    ? LESSONS.flatMap((candidate) => candidate.topics).find((candidate) => candidate.id === activeTopicId) ?? null
     : null;
 
   if (topic) {
@@ -23,7 +23,7 @@ export function GameApp() {
             <button
               className="pa-btn pa-btn-complete"
               onClick={() => {
-                completeTopic(topic.id, topic.badgeImage);
+                completeTopic(topic.id, topic.badgeImage ?? "voice-spark");
                 setActiveTopicId(null);
               }}
             >

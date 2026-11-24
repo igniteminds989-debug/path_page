@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Volume2, VolumeX, RotateCcw } from "lucide-react";
 import "./game.css";
 import { LESSONS } from "./data/lessons";
+import { ZONES } from "./data/zones";
 import { useProgress } from "./useProgress";
 import { ParallaxScene } from "./ParallaxScene";
 import { JourneyMap } from "./JourneyMap";
@@ -20,12 +21,15 @@ export function JourneyScreen({ onOpenTopic, onExit }: JourneyScreenProps) {
   const [bossDialog, setBossDialog] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
 
-  const reducedMotion = useMemo(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-    []
-  );
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReducedMotion(media.matches);
+    const update = () => setReducedMotion(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const completedCount = lesson.topics.filter((t) => state.completedTopics.includes(t.id)).length;
   const bossUnlocked = completedCount === lesson.topics.length;
@@ -38,7 +42,7 @@ export function JourneyScreen({ onOpenTopic, onExit }: JourneyScreenProps) {
   }, [state.completedTopics, lesson.topics]);
 
   const dialogTopic = dialogTopicId
-    ? lesson.topics.find((t) => t.id === dialogTopicId) ?? null
+    ? lesson.topics.find((topic) => topic.id === dialogTopicId) ?? null
     : null;
 
   // Lock body scroll
@@ -82,7 +86,8 @@ export function JourneyScreen({ onOpenTopic, onExit }: JourneyScreenProps) {
       </div>
 
       <JourneyMap
-        lesson={lesson}
+        lessons={LESSONS}
+        zones={ZONES}
         completedTopics={state.completedTopics}
         currentIndex={currentIndex}
         bossUnlocked={bossUnlocked}
@@ -93,7 +98,7 @@ export function JourneyScreen({ onOpenTopic, onExit }: JourneyScreenProps) {
 
       {dialogTopic && (
         <TopicDialog
-          topic={dialogTopic}
+          topic={{ ...dialogTopic, badgeImage: dialogTopic.badgeImage ?? "voice-spark" }}
           index={lesson.topics.findIndex((t) => t.id === dialogTopic.id)}
           completed={isTopicComplete(dialogTopic.id)}
           onStart={() => {
